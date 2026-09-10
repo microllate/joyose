@@ -18,6 +18,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
         hookDisplayFrameSetting(lpparam.classLoader);
         hookQcomPerformance(lpparam.classLoader);
+        hookBoostFramework(lpparam.classLoader);
     }
 
     private static void hookDisplayFrameSetting(ClassLoader cl) {
@@ -48,12 +49,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         }
     }
 
-    /**
-     * On this Qualcomm device PeGameController eventually calls QcomBoost.e(),
-     * which passes the actual resource array to android.util.BoostFramework.
-     * We record that array before it reaches the vendor performance layer.
-     * Nothing is modified in this diagnostic build.
-     */
     private static void hookQcomPerformance(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass(
@@ -83,6 +78,43 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + " hooked QcomBoost.d");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " QcomBoost diagnostics unavailable: " + e);
+        }
+    }
+
+    /**
+     * PowerKeeper's actual Qualcomm requests are ultimately passed to the
+     * framework BoostFramework. Hook the final API as a second observation
+     * point because an obfuscated vendor wrapper may bypass our g.e() hook.
+     * Diagnostic only: no performance value is modified.
+     */
+    private static void hookBoostFramework(ClassLoader cl) {
+        try {
+            Class<?> c = XposedHelpers.findClass("android.util.BoostFramework", cl);
+
+            XposedHelpers.findAndHookMethod(c, "perfLockAcquire", int.class, int[].class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
+                            int duration = ((Integer) p.args[0]).intValue();
+                            int[] resources = (int[]) p.args[1];
+                            XposedBridge.log(TAG + " BoostFramework.perfLockAcquire duration="
+                                    + duration + " resources=" + formatIntArray(resources));
+                        }
+                    });
+            XposedBridge.log(TAG + " hooked BoostFramework.perfLockAcquire");
+
+            XposedHelpers.findAndHookMethod(c, "perfHint",
+                    int.class, String.class, int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            XposedBridge.log(TAG + " BoostFramework.perfHint hint="
+                                    + p.args[0] + " userData=" + p.args[1]
+                                    + " duration=" + p.args[2] + " tpid=" + p.args[3]);
+                        }
+                    });
+            XposedBridge.log(TAG + " hooked BoostFramework.perfHint");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " BoostFramework diagnostics unavailable: " + e);
         }
     }
 
