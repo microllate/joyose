@@ -11,7 +11,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
     private static final int UNLOCK_FPS = 120;
-    private static final int TRACE_HINT = 4227;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -19,31 +18,25 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
         hookDisplayFrameSetting(lpparam.classLoader);
         hookQcomPerformance(lpparam.classLoader);
-        hookBoostFramework(lpparam.classLoader);
+        hookPeGameController(lpparam.classLoader);
     }
 
     private static void hookDisplayFrameSetting(ClassLoader cl) {
         try {
-            Class<?> c = XposedHelpers.findClass(
-                    "com.miui.powerkeeper.statemachine.DisplayFrameSetting", cl);
-
+            Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.statemachine.DisplayFrameSetting", cl);
             hookFpsMethod(c, "setFpsAync", new Class<?>[]{String.class, int.class, int.class});
             hookFpsMethod(c, "setFpsAync", new Class<?>[]{String.class, int.class});
-
-            XposedHelpers.findAndHookMethod(c, "setScreenEffect",
-                    String.class, int.class, int.class, new XC_MethodHook() {
+            XposedHelpers.findAndHookMethod(c, "setScreenEffect", String.class, int.class, int.class,
+                    new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (p.args.length < 3 || !(p.args[1] instanceof Integer)) return;
                             int fps = ((Integer) p.args[1]).intValue();
                             if (fps > 0 && fps <= 60) {
                                 p.args[1] = UNLOCK_FPS;
-                                XposedBridge.log(TAG + " setScreenEffect: "
-                                        + p.args[0] + " " + fps + " -> " + UNLOCK_FPS
-                                        + " cookie=" + p.args[2]);
+                                XposedBridge.log(TAG + " setScreenEffect: " + p.args[0] + " " + fps + " -> " + UNLOCK_FPS + " cookie=" + p.args[2]);
                             }
                         }
                     });
-
             XposedBridge.log(TAG + " hooked DisplayFrameSetting FPS policy");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " hook unavailable: " + e);
@@ -52,79 +45,51 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
 
     private static void hookQcomPerformance(ClassLoader cl) {
         try {
-            Class<?> c = XposedHelpers.findClass(
-                    "com.miui.powerkeeper.perfengine.g", cl);
-
-            XposedHelpers.findAndHookMethod(c, "e", int.class, int[].class,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
-                            int duration = ((Integer) p.args[0]).intValue();
-                            int[] resources = (int[]) p.args[1];
-                            XposedBridge.log(TAG + " QcomBoost.e duration="
-                                    + duration + " resources=" + formatIntArray(resources));
-                        }
-                    });
+            Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.g", cl);
+            XposedHelpers.findAndHookMethod(c, "e", int.class, int[].class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
+                    XposedBridge.log(TAG + " QcomBoost.e duration=" + p.args[0] + " resources=" + formatIntArray((int[]) p.args[1]));
+                }
+            });
             XposedBridge.log(TAG + " hooked QcomBoost.e");
-
-            XposedHelpers.findAndHookMethod(c, "d", int.class, int.class, int.class,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.args.length < 3) return;
-                            int hint = ((Integer) p.args[0]).intValue();
-                            int duration = ((Integer) p.args[1]).intValue();
-                            int tpid = ((Integer) p.args[2]).intValue();
-                            XposedBridge.log(TAG + " QcomBoost.d hint="
-                                    + hint + " duration=" + duration + " tpid=" + tpid);
-                            if (hint == TRACE_HINT) {
-                                logCallerStack("QcomBoost.d hint=4227 caller");
-                            }
-                        }
-                    });
-            XposedBridge.log(TAG + " hooked QcomBoost.d");
         } catch (Throwable e) {
-            XposedBridge.log(TAG + " QcomBoost diagnostics unavailable: " + e);
+            XposedBridge.log(TAG + " QcomBoost.e unavailable: " + e);
         }
     }
 
-    /**
-     * PowerKeeper's actual Qualcomm requests are ultimately passed to the
-     * framework BoostFramework. Hook the final API as a second observation
-     * point because an obfuscated vendor wrapper may bypass our g.e() hook.
-     * Diagnostic only: no performance value is modified.
-     */
-    private static void hookBoostFramework(ClassLoader cl) {
+    /** Trace the actual PowerKeeper Qualcomm game/performance resource builders. */
+    private static void hookPeGameController(ClassLoader cl) {
         try {
-            Class<?> c = XposedHelpers.findClass("android.util.BoostFramework", cl);
+            Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.PeGameController", cl);
+            XposedHelpers.findAndHookMethod(c, "p", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    XposedBridge.log(TAG + " PeGameController.p() f514j="
+                            + safeField(p.thisObject, "f514j") + " f515k="
+                            + safeField(p.thisObject, "f515k"));
+                    logCallerStack("PeGameController.p() caller");
+                }
+            });
+            XposedBridge.log(TAG + " hooked PeGameController.p()");
 
-            XposedHelpers.findAndHookMethod(c, "perfLockAcquire", int.class, int[].class,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
-                            int duration = ((Integer) p.args[0]).intValue();
-                            int[] resources = (int[]) p.args[1];
-                            XposedBridge.log(TAG + " BoostFramework.perfLockAcquire duration="
-                                    + duration + " resources=" + formatIntArray(resources));
-                        }
-                    });
-            XposedBridge.log(TAG + " hooked BoostFramework.perfLockAcquire");
-
-            XposedHelpers.findAndHookMethod(c, "perfHint",
-                    int.class, String.class, int.class, int.class,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            int hint = ((Integer) p.args[0]).intValue();
-                            XposedBridge.log(TAG + " BoostFramework.perfHint hint="
-                                    + hint + " userData=" + p.args[1]
-                                    + " duration=" + p.args[2] + " tpid=" + p.args[3]);
-                            if (hint == TRACE_HINT) {
-                                logCallerStack("BoostFramework.perfHint hint=4227 caller");
-                            }
-                        }
-                    });
-            XposedBridge.log(TAG + " hooked BoostFramework.perfHint");
+            XposedHelpers.findAndHookMethod(c, "q", String.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    XposedBridge.log(TAG + " PeGameController.q(String) raw=" + p.args[0]);
+                    logCallerStack("PeGameController.q(String) caller");
+                }
+            });
+            XposedBridge.log(TAG + " hooked PeGameController.q(String)");
         } catch (Throwable e) {
-            XposedBridge.log(TAG + " BoostFramework diagnostics unavailable: " + e);
+            XposedBridge.log(TAG + " PeGameController diagnostics unavailable: " + e);
+        }
+    }
+
+    private static String safeField(Object obj, String name) {
+        try {
+            Object value = XposedHelpers.getObjectField(obj, name);
+            return String.valueOf(value);
+        } catch (Throwable e) {
+            return "<unavailable:" + e.getClass().getSimpleName() + ">";
         }
     }
 
@@ -135,10 +100,8 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             int count = 0;
             for (StackTraceElement e : stack) {
                 String cls = e.getClassName();
-                if (cls.equals(Thread.class.getName()) || cls.startsWith("de.robv.android.xposed.")) {
-                    continue;
-                }
-                if (count++ >= 18) break;
+                if (cls.equals(Thread.class.getName()) || cls.startsWith("de.robv.android.xposed.")) continue;
+                if (count++ >= 14) break;
                 sb.append("\n  at ").append(e);
             }
             XposedBridge.log(sb.toString());
@@ -166,8 +129,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                     int fps = ((Integer) p.args[1]).intValue();
                     if (fps > 0 && fps <= 60) {
                         p.args[1] = UNLOCK_FPS;
-                        XposedBridge.log(TAG + " " + name + ": "
-                                + p.args[0] + " " + fps + " -> " + UNLOCK_FPS);
+                        XposedBridge.log(TAG + " " + name + ": " + p.args[0] + " " + fps + " -> " + UNLOCK_FPS);
                     }
                 }
             };
