@@ -6,7 +6,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** PowerKeeper-side FPS policy bypass. */
+/** PowerKeeper-side FPS policy bypass and performance diagnostics. */
 public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
@@ -17,6 +17,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         if (!POWERKEEPER.equals(lpparam.packageName)) return;
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
         hookDisplayFrameSetting(lpparam.classLoader);
+        hookQcomPerformanceCommands(lpparam.classLoader);
     }
 
     private static void hookDisplayFrameSetting(ClassLoader cl) {
@@ -44,6 +45,43 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + " hooked DisplayFrameSetting FPS policy");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " hook unavailable: " + e);
+        }
+    }
+
+    /**
+     * Qualcomm devices use PeGameController.q(String) for perflock commands.
+     * We only record the raw command here; no performance command is changed yet.
+     * This lets us identify the exact CPU/GPU/DDR resources before selectively
+     * bypassing any GPU policy that conflicts with a user-owned KonaBass table.
+     */
+    private static void hookQcomPerformanceCommands(ClassLoader cl) {
+        try {
+            Class<?> c = XposedHelpers.findClass(
+                    "com.miui.powerkeeper.perfengine.PeGameController", cl);
+
+            hookPerfCommand(c, "q");
+            hookPerfCommand(c, "p");
+
+            XposedBridge.log(TAG + " hooked Qcom performance command diagnostics");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " Qcom diagnostics unavailable: " + e);
+        }
+    }
+
+    private static void hookPerfCommand(Class<?> c, String name) {
+        try {
+            XposedHelpers.findAndHookMethod(c, name, String.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    if (p.args.length < 1 || !(p.args[0] instanceof String)) return;
+                    String cmd = (String) p.args[0];
+                    if (cmd.startsWith("0x")) {
+                        XposedBridge.log(TAG + " " + name + " perflock: " + cmd);
+                    }
+                }
+            });
+            XposedBridge.log(TAG + " hooked PeGameController." + name);
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " PeGameController." + name + " unavailable: " + e);
         }
     }
 
