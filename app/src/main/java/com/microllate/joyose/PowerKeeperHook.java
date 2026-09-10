@@ -6,7 +6,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** PowerKeeper-side FPS policy bypass and Qualcomm system-performance diagnostics. */
+/** PowerKeeper-side FPS policy bypass and Qualcomm performance diagnostics. */
 public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
@@ -18,7 +18,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
         hookDisplayFrameSetting(lpparam.classLoader);
         hookQcomPerformance(lpparam.classLoader);
-        hookBoostFramework(lpparam.classLoader);
+        hookBoostFramework();
         hookPeGameController(lpparam.classLoader);
         hookSystemTuning(lpparam.classLoader);
         hookSocOptimization(lpparam.classLoader);
@@ -51,31 +51,45 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.g", cl);
             XposedHelpers.findAndHookMethod(c, "e", int.class, int[].class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
-                    XposedBridge.log(TAG + " QcomBoost.e duration=" + p.args[0] + " resources=" + formatIntArray((int[]) p.args[1]));
+                    XposedBridge.log(TAG + " QcomBoost.e duration=" + p.args[0]
+                            + " resources=" + formatIntArray((int[]) p.args[1]));
+                    logCallerStack("QcomBoost.e caller");
                 }
             });
-            XposedBridge.log(TAG + " hooked QcomBoost.e");
+            XposedHelpers.findAndHookMethod(c, "d", int.class, int.class, int.class, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    XposedBridge.log(TAG + " QcomBoost.d hint=" + p.args[0]
+                            + " duration=" + p.args[1] + " tpid=" + p.args[2]);
+                }
+            });
+            XposedBridge.log(TAG + " hooked QcomBoost.e/d");
         } catch (Throwable e) {
-            XposedBridge.log(TAG + " QcomBoost.e unavailable: " + e);
+            XposedBridge.log(TAG + " QcomBoost unavailable: " + e);
         }
     }
 
-    /** Hook the actual Android BoostFramework entry used by PowerKeeper's reflection wrapper. */
-    private static void hookBoostFramework(ClassLoader cl) {
+    /** Hook the framework class with the bootstrap class loader, not PowerKeeper's app loader. */
+    private static void hookBoostFramework() {
         try {
-            Class<?> c = XposedHelpers.findClass("android.util.BoostFramework", cl);
-            XposedHelpers.findAndHookMethod(c, "perfLockAcquire", int.class, int[].class,
-                    new XC_MethodHook() {
+            Class<?> c = Class.forName("android.util.BoostFramework", false, null);
+            int hooked = 0;
+            for (java.lang.reflect.Method m : c.getDeclaredMethods()) {
+                if (!"perfLockAcquire".equals(m.getName())) continue;
+                Class<?>[] types = m.getParameterTypes();
+                if (types.length == 2 && types[0] == int.class && types[1] == int[].class) {
+                    XposedBridge.hookMethod(m, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             XposedBridge.log(TAG + " BoostFramework.perfLockAcquire duration=" + p.args[0]
                                     + " resources=" + formatIntArray((int[]) p.args[1]));
                             logCallerStack("BoostFramework.perfLockAcquire caller");
                         }
                     });
-            XposedBridge.log(TAG + " hooked BoostFramework.perfLockAcquire");
+                    hooked++;
+                }
+            }
+            XposedBridge.log(TAG + " hooked BoostFramework.perfLockAcquire overloads=" + hooked);
         } catch (Throwable e) {
-            XposedBridge.log(TAG + " BoostFramework.perfLockAcquire unavailable: " + e);
+            XposedBridge.log(TAG + " BoostFramework bootstrap hook unavailable: " + e);
         }
     }
 
@@ -84,20 +98,20 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.PeGameController", cl);
             XposedHelpers.findAndHookMethod(c, "p", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    XposedBridge.log(TAG + " PeGameController.p() f514j=" + safeField(p.thisObject, "f514j") + " f515k=" + safeField(p.thisObject, "f515k"));
+                    XposedBridge.log(TAG + " PeGameController.p() f514j=" + safeField(p.thisObject, "f514j")
+                            + " f515k=" + safeField(p.thisObject, "f515k"));
                     logCallerStack("PeGameController.p() caller");
                 }
             });
-            XposedBridge.log(TAG + " hooked PeGameController.p()");
             XposedHelpers.findAndHookMethod(c, "q", String.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     XposedBridge.log(TAG + " PeGameController.q(String) raw=" + p.args[0]);
                     logCallerStack("PeGameController.q(String) caller");
                 }
             });
-            XposedBridge.log(TAG + " hooked PeGameController.q(String)");
+            XposedBridge.log(TAG + " hooked PeGameController.p/q");
         } catch (Throwable e) {
-            XposedBridge.log(TAG + " PeGameController diagnostics unavailable: " + e);
+            XposedBridge.log(TAG + " PeGameController unavailable: " + e);
         }
     }
 
@@ -106,8 +120,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.statemachine.DynamicTurboPowerHandler", cl);
             XposedHelpers.findAndHookMethod(c, "systemTuning", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    XposedBridge.log(TAG + " systemTuning mSystemTuning="
-                            + safeField(p.thisObject, "mSystemTuning")
+                    XposedBridge.log(TAG + " systemTuning mSystemTuning=" + safeField(p.thisObject, "mSystemTuning")
                             + " mNeedRelease=" + safeField(p.thisObject, "mNeedRelease")
                             + " mArgs=" + safeField(p.thisObject, "mArgs"));
                 }
