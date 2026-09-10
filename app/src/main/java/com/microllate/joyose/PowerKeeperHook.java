@@ -6,7 +6,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** PowerKeeper-side FPS policy bypass and Qualcomm performance diagnostics. */
+/** PowerKeeper-side FPS policy bypass and Qualcomm system-performance diagnostics. */
 public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
@@ -19,6 +19,8 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         hookDisplayFrameSetting(lpparam.classLoader);
         hookQcomPerformance(lpparam.classLoader);
         hookPeGameController(lpparam.classLoader);
+        hookSystemTuning(lpparam.classLoader);
+        hookSocOptimization(lpparam.classLoader);
     }
 
     private static void hookDisplayFrameSetting(ClassLoader cl) {
@@ -58,20 +60,16 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** Trace the actual PowerKeeper Qualcomm game/performance resource builders. */
     private static void hookPeGameController(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.PeGameController", cl);
             XposedHelpers.findAndHookMethod(c, "p", new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    XposedBridge.log(TAG + " PeGameController.p() f514j="
-                            + safeField(p.thisObject, "f514j") + " f515k="
-                            + safeField(p.thisObject, "f515k"));
+                    XposedBridge.log(TAG + " PeGameController.p() f514j=" + safeField(p.thisObject, "f514j") + " f515k=" + safeField(p.thisObject, "f515k"));
                     logCallerStack("PeGameController.p() caller");
                 }
             });
             XposedBridge.log(TAG + " hooked PeGameController.p()");
-
             XposedHelpers.findAndHookMethod(c, "q", String.class, new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     XposedBridge.log(TAG + " PeGameController.q(String) raw=" + p.args[0]);
@@ -81,6 +79,45 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             XposedBridge.log(TAG + " hooked PeGameController.q(String)");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " PeGameController diagnostics unavailable: " + e);
+        }
+    }
+
+    /**
+     * DynamicTurboPowerHandler has a system-wide PowerKeeper perfLock path
+     * independent of game foreground handling. We only observe it here.
+     */
+    private static void hookSystemTuning(ClassLoader cl) {
+        try {
+            Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.statemachine.DynamicTurboPowerHandler", cl);
+            XposedHelpers.findAndHookMethod(c, "systemTuning", new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    XposedBridge.log(TAG + " systemTuning mSystemTuning="
+                            + safeField(p.thisObject, "mSystemTuning")
+                            + " mNeedRelease=" + safeField(p.thisObject, "mNeedRelease")
+                            + " mArgs=" + safeField(p.thisObject, "mArgs"));
+                }
+            });
+            XposedBridge.log(TAG + " hooked DynamicTurboPowerHandler.systemTuning()");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " DynamicTurboPowerHandler unavailable: " + e);
+        }
+    }
+
+    /** Observe the other system-wide perfLock implementation used by the power module. */
+    private static void hookSocOptimization(ClassLoader cl) {
+        try {
+            Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.statemachine.SocOptimizationHandlerVersion2", cl);
+            XposedHelpers.findAndHookMethod(c, "perfLockAcquire", int.class, int.class, int[].class, int.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            XposedBridge.log(TAG + " SocOptimizationV2.perfLockAcquire handle=" + p.args[0]
+                                    + " arg=" + p.args[1] + " resources=" + formatIntArray((int[]) p.args[2])
+                                    + " workType=" + p.args[3]);
+                        }
+                    });
+            XposedBridge.log(TAG + " hooked SocOptimizationHandlerVersion2.perfLockAcquire()");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " SocOptimizationV2 unavailable: " + e);
         }
     }
 
