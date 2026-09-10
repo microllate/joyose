@@ -6,7 +6,7 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** PowerKeeper-side FPS policy bypass and performance diagnostics. */
+/** PowerKeeper-side FPS policy bypass and Qualcomm performance diagnostics. */
 public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
@@ -17,7 +17,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         if (!POWERKEEPER.equals(lpparam.packageName)) return;
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
         hookDisplayFrameSetting(lpparam.classLoader);
-        hookQcomPerformanceCommands(lpparam.classLoader);
+        hookQcomPerformance(lpparam.classLoader);
     }
 
     private static void hookDisplayFrameSetting(ClassLoader cl) {
@@ -49,40 +49,51 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * Qualcomm devices use PeGameController.q(String) for perflock commands.
-     * We only record the raw command here; no performance command is changed yet.
-     * This lets us identify the exact CPU/GPU/DDR resources before selectively
-     * bypassing any GPU policy that conflicts with a user-owned KonaBass table.
+     * On this Qualcomm device PeGameController eventually calls QcomBoost.e(),
+     * which passes the actual resource array to android.util.BoostFramework.
+     * We record that array before it reaches the vendor performance layer.
+     * Nothing is modified in this diagnostic build.
      */
-    private static void hookQcomPerformanceCommands(ClassLoader cl) {
+    private static void hookQcomPerformance(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass(
-                    "com.miui.powerkeeper.perfengine.PeGameController", cl);
+                    "com.miui.powerkeeper.perfengine.g", cl);
 
-            hookPerfCommand(c, "q");
-            hookPerfCommand(c, "p");
+            XposedHelpers.findAndHookMethod(c, "e", int.class, int[].class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
+                            int duration = ((Integer) p.args[0]).intValue();
+                            int[] resources = (int[]) p.args[1];
+                            XposedBridge.log(TAG + " QcomBoost.e duration="
+                                    + duration + " resources=" + formatIntArray(resources));
+                        }
+                    });
+            XposedBridge.log(TAG + " hooked QcomBoost.e");
 
-            XposedBridge.log(TAG + " hooked Qcom performance command diagnostics");
+            XposedHelpers.findAndHookMethod(c, "d", int.class, int.class, int.class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            if (p.args.length < 3) return;
+                            XposedBridge.log(TAG + " QcomBoost.d hint="
+                                    + p.args[0] + " duration=" + p.args[1]
+                                    + " tpid=" + p.args[2]);
+                        }
+                    });
+            XposedBridge.log(TAG + " hooked QcomBoost.d");
         } catch (Throwable e) {
-            XposedBridge.log(TAG + " Qcom diagnostics unavailable: " + e);
+            XposedBridge.log(TAG + " QcomBoost diagnostics unavailable: " + e);
         }
     }
 
-    private static void hookPerfCommand(Class<?> c, String name) {
-        try {
-            XposedHelpers.findAndHookMethod(c, name, String.class, new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (p.args.length < 1 || !(p.args[0] instanceof String)) return;
-                    String cmd = (String) p.args[0];
-                    if (cmd.startsWith("0x")) {
-                        XposedBridge.log(TAG + " " + name + " perflock: " + cmd);
-                    }
-                }
-            });
-            XposedBridge.log(TAG + " hooked PeGameController." + name);
-        } catch (Throwable e) {
-            XposedBridge.log(TAG + " PeGameController." + name + " unavailable: " + e);
+    private static String formatIntArray(int[] values) {
+        if (values == null) return "null";
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < values.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(values[i]);
         }
+        return sb.append(']').toString();
     }
 
     private static void hookFpsMethod(Class<?> c, String name, Class<?>[] parameterTypes) {
