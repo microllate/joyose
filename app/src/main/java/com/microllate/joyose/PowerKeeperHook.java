@@ -11,6 +11,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
     private static final int UNLOCK_FPS = 120;
+    private static final int TRACE_HINT = 4227;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -70,9 +71,14 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (p.args.length < 3) return;
+                            int hint = ((Integer) p.args[0]).intValue();
+                            int duration = ((Integer) p.args[1]).intValue();
+                            int tpid = ((Integer) p.args[2]).intValue();
                             XposedBridge.log(TAG + " QcomBoost.d hint="
-                                    + p.args[0] + " duration=" + p.args[1]
-                                    + " tpid=" + p.args[2]);
+                                    + hint + " duration=" + duration + " tpid=" + tpid);
+                            if (hint == TRACE_HINT) {
+                                logCallerStack("QcomBoost.d hint=4227 caller");
+                            }
                         }
                     });
             XposedBridge.log(TAG + " hooked QcomBoost.d");
@@ -107,14 +113,36 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                     int.class, String.class, int.class, int.class,
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            int hint = ((Integer) p.args[0]).intValue();
                             XposedBridge.log(TAG + " BoostFramework.perfHint hint="
-                                    + p.args[0] + " userData=" + p.args[1]
+                                    + hint + " userData=" + p.args[1]
                                     + " duration=" + p.args[2] + " tpid=" + p.args[3]);
+                            if (hint == TRACE_HINT) {
+                                logCallerStack("BoostFramework.perfHint hint=4227 caller");
+                            }
                         }
                     });
             XposedBridge.log(TAG + " hooked BoostFramework.perfHint");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " BoostFramework diagnostics unavailable: " + e);
+        }
+    }
+
+    private static void logCallerStack(String title) {
+        try {
+            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
+            StringBuilder sb = new StringBuilder(TAG).append(' ').append(title);
+            int count = 0;
+            for (StackTraceElement e : stack) {
+                String cls = e.getClassName();
+                if (cls.equals(Thread.class.getName()) || cls.startsWith("de.robv.android.xposed.")) {
+                    continue;
+                }
+                if (count++ >= 18) break;
+                sb.append("\n  at ").append(e);
+            }
+            XposedBridge.log(sb.toString());
+        } catch (Throwable ignored) {
         }
     }
 
