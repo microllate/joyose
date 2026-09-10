@@ -3,13 +3,9 @@ package com.microllate.joyose;
 import android.app.Application;
 import android.content.ContentResolver;
 import com.google.gson.stream.JsonReader;
-import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.Reader;
 import java.io.StringReader;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.util.Iterator;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
@@ -23,12 +19,10 @@ public class JoyoseHook implements IXposedHookLoadPackage {
     @Override public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         if (!JOYOSE.equals(lpparam.packageName)) return;
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
-
         XposedHelpers.findAndHookMethod(Application.class, "onCreate", new XC_MethodHook() {
             @Override protected void afterHookedMethod(MethodHookParam param) {
                 hookCloudParser(lpparam.classLoader);
                 hookMiuiCloudData(lpparam.classLoader);
-                hookHttpConnections();
             }
         });
     }
@@ -47,7 +41,7 @@ public class JoyoseHook implements IXposedHookLoadPackage {
                     if (profile == null) return;
                     JSONObject hacked = blockPerformanceProfile(profile);
                     replaceProfile(root, hacked);
-                    Object r = XposedHelpers.newInstance(reader, new Class[]{Reader.class}, new Object[]{new StringReader(root.toString())});
+                    Object r = XposedHelpers.newInstance(reader, new StringReader(root.toString()));
                     p.setResult(XposedBridge.invokeOriginalMethod(p.method, p.thisObject, new Object[]{r}));
                     XposedBridge.log(TAG + " cloud performance profile blocked");
                 }
@@ -106,36 +100,5 @@ public class JoyoseHook implements IXposedHookLoadPackage {
             });
             XposedBridge.log(TAG + " MiuiSettings cloud data blocked");
         } catch (Throwable e) { XposedBridge.log(TAG + " MiuiSettings hook unavailable: " + e); }
-    }
-
-    private static void hookHttpConnections() {
-        try {
-            final XC_MethodHook hook = new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) throws Throwable {
-                    Object o = p.thisObject;
-                    if (!(o instanceof HttpURLConnection)) return;
-                    URL url = ((HttpURLConnection)o).getURL();
-                    if (url == null) return;
-                    String s = url.toString().toLowerCase();
-                    if (s.contains("tracking.") || s.contains("ad.xiaomi.com") || s.contains("ad.miui.com")) {
-                        p.setThrowable(new java.io.IOException("blocked by Joyose module"));
-                    }
-                }
-            };
-            // The concrete HttpURLConnection implementation is device/JDK dependent;
-            // this constructor hook discovers it at runtime.
-            final XC_MethodHook.Unhook[] holder = new XC_MethodHook.Unhook[1];
-            holder[0] = XposedHelpers.findAndHookConstructor(HttpURLConnection.class, URL.class, new XC_MethodHook() {
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    try {
-                        Class<?> impl = p.thisObject.getClass();
-                        XposedHelpers.findAndHookMethod(impl, "connect", hook);
-                        XposedHelpers.findAndHookMethod(impl, "getInputStream", hook);
-                        XposedHelpers.findAndHookMethod(impl, "getOutputStream", hook);
-                    } catch (Throwable ignored) {}
-                    if (holder[0] != null) holder[0].unhook();
-                }
-            });
-        } catch (Throwable e) { XposedBridge.log(TAG + " HTTP hook unavailable: " + e); }
     }
 }
