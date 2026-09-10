@@ -18,6 +18,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
         hookDisplayFrameSetting(lpparam.classLoader);
         hookQcomPerformance(lpparam.classLoader);
+        hookBoostFramework(lpparam.classLoader);
         hookPeGameController(lpparam.classLoader);
         hookSystemTuning(lpparam.classLoader);
         hookSocOptimization(lpparam.classLoader);
@@ -60,6 +61,24 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         }
     }
 
+    /** Hook the actual Android BoostFramework entry used by PowerKeeper's reflection wrapper. */
+    private static void hookBoostFramework(ClassLoader cl) {
+        try {
+            Class<?> c = XposedHelpers.findClass("android.util.BoostFramework", cl);
+            XposedHelpers.findAndHookMethod(c, "perfLockAcquire", int.class, int[].class,
+                    new XC_MethodHook() {
+                        @Override protected void beforeHookedMethod(MethodHookParam p) {
+                            XposedBridge.log(TAG + " BoostFramework.perfLockAcquire duration=" + p.args[0]
+                                    + " resources=" + formatIntArray((int[]) p.args[1]));
+                            logCallerStack("BoostFramework.perfLockAcquire caller");
+                        }
+                    });
+            XposedBridge.log(TAG + " hooked BoostFramework.perfLockAcquire");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " BoostFramework.perfLockAcquire unavailable: " + e);
+        }
+    }
+
     private static void hookPeGameController(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.PeGameController", cl);
@@ -82,10 +101,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         }
     }
 
-    /**
-     * DynamicTurboPowerHandler has a system-wide PowerKeeper perfLock path
-     * independent of game foreground handling. We only observe it here.
-     */
     private static void hookSystemTuning(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.statemachine.DynamicTurboPowerHandler", cl);
@@ -103,7 +118,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         }
     }
 
-    /** Observe the other system-wide perfLock implementation used by the power module. */
     private static void hookSocOptimization(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.statemachine.SocOptimizationHandlerVersion2", cl);
@@ -124,6 +138,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static String safeField(Object obj, String name) {
         try {
             Object value = XposedHelpers.getObjectField(obj, name);
+            if (value instanceof int[]) return formatIntArray((int[]) value);
             return String.valueOf(value);
         } catch (Throwable e) {
             return "<unavailable:" + e.getClass().getSimpleName() + ">";
