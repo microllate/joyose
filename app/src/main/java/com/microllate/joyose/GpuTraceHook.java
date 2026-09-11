@@ -15,7 +15,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
-/** Diagnostic tracing of PowerKeeper's scheduler/perf command pipeline. */
+/** Diagnostic tracing of PowerKeeper's actual game scheduler/perf command pipeline. */
 public class GpuTraceHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-GPUTrace]";
     private static final String PK = "com.miui.powerkeeper";
@@ -33,52 +33,72 @@ public class GpuTraceHook implements IXposedHookLoadPackage {
     private static void hookGame(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.PeGameController", cl);
-            hookIfPresent(c, "H", new Class<?>[0], "PeGameController.H", true);
-            hookIfPresent(c, "D", new Class<?>[0], "PeGameController.D", true);
-            hookIfPresent(c, "R", new Class<?>[]{org.json.JSONObject.class}, "PeGameController.R", true);
-            hookIfPresent(c, "C", new Class<?>[]{String.class}, "PeGameController.C", false);
-            XposedBridge.log(TAG + " hooked PeGameController H/D/R/C");
-        } catch (Throwable e) { XposedBridge.log(TAG + " game trace unavailable: " + e); }
+
+            // These are the actual dispatch points seen in JADX:
+            // C/B -> foreground handling, S -> perf scheduler command path,
+            // X -> restore scheduler command path, V -> restore helper.
+            hookEveryMethodByName(c, "B");
+            hookEveryMethodByName(c, "C");
+            hookEveryMethodByName(c, "S");
+            hookEveryMethodByName(c, "X");
+            hookEveryMethodByName(c, "V");
+            hookEveryMethodByName(c, "p");
+            hookEveryMethodByName(c, "q");
+            hookEveryMethodByName(c, "R");
+            hookEveryMethodByName(c, "H");
+            hookEveryMethodByName(c, "D");
+
+            XposedBridge.log(TAG + " hooked PeGameController dispatch methods B/C/S/X/V/p/q/R/H/D");
+            dumpMethodList(c, "PeGameController");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " game trace unavailable: " + e);
+        }
     }
 
-    /**
-     * Do not assume obfuscated parameter types. The previous build stopped after
-     * PeSchedHandler.i(ArrayList) was absent, so h()/l() were never hooked.
-     * This version hooks every declared method in the class and logs its signature,
-     * while only dumping arguments for scheduler/write-looking methods.
-     */
     private static void hookSchedHandler(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.PeSchedHandler", cl);
             int hooked = 0;
             for (Method m : c.getDeclaredMethods()) {
-                String name = m.getName();
-                String lower = name.toLowerCase(Locale.ROOT);
-                boolean interesting = lower.contains("sched") || lower.contains("write")
-                        || lower.contains("restore") || lower.contains("perf")
-                        || lower.equals("h") || lower.equals("i") || lower.equals("l")
-                        || lower.equals("j") || lower.equals("k");
-                if (!interesting) continue;
                 final Method target = m;
                 final String sig = signature(target);
                 XposedBridge.hookMethod(target, new XC_MethodHook() {
                     @Override protected void beforeHookedMethod(MethodHookParam p) {
                         XposedBridge.log(TAG + " PeSchedHandler." + sig + " args=" + formatObjects(p.args));
-                        if (hasListArg(p.args)) logGpuCommandsFromArgs(p.args);
+                        logGpuCommandsFromArgs(p.args);
+                    }
+                    @Override protected void afterHookedMethod(MethodHookParam p) {
+                        if (target.getName().equals("handleMessage")) {
+                            XposedBridge.log(TAG + " PeSchedHandler.handleMessage after result=" + String.valueOf(p.getResult()));
+                        }
                     }
                 });
                 hooked++;
             }
-            XposedBridge.log(TAG + " hooked PeSchedHandler methods=" + hooked);
-        } catch (Throwable e) { XposedBridge.log(TAG + " sched handler unavailable: " + e); }
+            XposedBridge.log(TAG + " hooked ALL PeSchedHandler methods=" + hooked);
+            dumpMethodList(c, "PeSchedHandler");
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " sched handler unavailable: " + e);
+        }
     }
 
     private static void hookPerfUtils(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("com.miui.powerkeeper.perfengine.PerfUtils", cl);
-            hookIfPresent(c, "c", new Class<?>[]{String.class}, "PerfUtils.c", false);
+            for (Method m : c.getDeclaredMethods()) {
+                final Method target = m;
+                if (!target.getName().equals("c")) continue;
+                final String sig = signature(target);
+                XposedBridge.hookMethod(target, new XC_MethodHook() {
+                    @Override protected void beforeHookedMethod(MethodHookParam p) {
+                        XposedBridge.log(TAG + " PerfUtils.c args=" + formatObjects(p.args));
+                    }
+                });
+            }
             XposedBridge.log(TAG + " hooked PerfUtils.c");
-        } catch (Throwable e) { XposedBridge.log(TAG + " PerfUtils trace unavailable: " + e); }
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " PerfUtils trace unavailable: " + e);
+        }
     }
 
     private static void hookSchedConfig(ClassLoader cl) {
@@ -102,41 +122,47 @@ public class GpuTraceHook implements IXposedHookLoadPackage {
                 XposedBridge.hookMethod(m, new XC_MethodHook() {
                     @Override protected void beforeHookedMethod(MethodHookParam p) {
                         XposedBridge.log(TAG + " " + sig + " args=" + formatObjects(p.args));
-                        dumpAllFields(p.thisObject, "SchedConfig");
                     }
                 });
                 hooked++;
             }
             XposedBridge.log(TAG + " hooked SchedConfig methods=" + hooked);
-        } catch (Throwable e) { XposedBridge.log(TAG + " SchedConfig trace unavailable: " + e); }
-    }
-
-    private static void hookIfPresent(final Class<?> c, String name, Class<?>[] args, final String label, final boolean after) {
-        try {
-            Object[] hookArgs = new Object[args.length + 1];
-            System.arraycopy(args, 0, hookArgs, 0, args.length);
-            hookArgs[args.length] = new XC_MethodHook() {
-                @Override protected void beforeHookedMethod(MethodHookParam p) {
-                    if (!after) logGameState(p.thisObject, label + " before");
-                }
-                @Override protected void afterHookedMethod(MethodHookParam p) {
-                    if (after) logGameState(p.thisObject, label + " after");
-                }
-            };
-            XposedHelpers.findAndHookMethod(c, name, hookArgs);
         } catch (Throwable e) {
-            XposedBridge.log(TAG + " " + label + " unavailable: " + e);
+            XposedBridge.log(TAG + " SchedConfig trace unavailable: " + e);
         }
     }
 
-    private static String signature(Method m) {
-        return m.getName() + Arrays.toString(m.getParameterTypes()) + " -> " + m.getReturnType().getName();
-    }
-
-    private static boolean hasListArg(Object[] args) {
-        if (args == null) return false;
-        for (Object a : args) if (a instanceof List) return true;
-        return false;
+    private static void hookEveryMethodByName(final Class<?> c, final String name) {
+        int count = 0;
+        for (Method m : c.getDeclaredMethods()) {
+            if (!m.getName().equals(name)) continue;
+            final Method target = m;
+            final String sig = signature(target);
+            XposedBridge.hookMethod(target, new XC_MethodHook() {
+                @Override protected void beforeHookedMethod(MethodHookParam p) {
+                    XposedBridge.log(TAG + " PeGameController." + sig + " args=" + formatObjects(p.args));
+                    logGpuCommandsFromArgs(p.args);
+                    if (name.equals("B") || name.equals("C") || name.equals("S") || name.equals("X") || name.equals("V")) {
+                        dumpAllFields(p.thisObject, "PeGameController before " + name);
+                    }
+                }
+                @Override protected void afterHookedMethod(MethodHookParam p) {
+                    if (name.equals("p") || name.equals("q") || name.equals("R")
+                            || name.equals("H") || name.equals("D")) {
+                        dumpAllFields(p.thisObject, "PeGameController after " + name);
+                    }
+                    if (name.equals("S") || name.equals("X")) {
+                        XposedBridge.log(TAG + " PeGameController." + name + " result=" + String.valueOf(p.getResult()));
+                    }
+                }
+            });
+            count++;
+        }
+        if (count == 0) {
+            XposedBridge.log(TAG + " PeGameController method absent: " + name);
+        } else {
+            XposedBridge.log(TAG + " hooked PeGameController." + name + " count=" + count);
+        }
     }
 
     private static void logGpuCommandsFromArgs(Object[] args) {
@@ -144,16 +170,16 @@ public class GpuTraceHook implements IXposedHookLoadPackage {
         for (Object a : args) {
             if (a instanceof List) logGpuCommands((List<?>) a);
             else if (a instanceof String) logGpuString((String) a);
+            else if (a instanceof int[]) logIntArray((int[]) a);
         }
     }
 
     private static void logGpuCommands(List<?> list) {
         if (list == null) return;
-        int n = Math.min(list.size(), 120);
+        int n = Math.min(list.size(), 160);
         for (int i = 0; i < n; i++) {
             Object v = list.get(i);
-            if (v == null) continue;
-            logGpuString(String.valueOf(v));
+            if (v != null) logGpuString(String.valueOf(v));
         }
         if (list.size() > n) XposedBridge.log(TAG + " GPU-CANDIDATE list truncated +" + (list.size() - n));
     }
@@ -167,21 +193,23 @@ public class GpuTraceHook implements IXposedHookLoadPackage {
         }
     }
 
-    private static void logGameState(Object o, String phase) {
+    private static void logIntArray(int[] a) {
+        if (a == null) return;
+        XposedBridge.log(TAG + " INT-ARRAY len=" + a.length + " values=" + Arrays.toString(a));
+    }
+
+    private static String signature(Method m) {
+        return m.getName() + Arrays.toString(m.getParameterTypes()) + " -> " + m.getReturnType().getName();
+    }
+
+    private static void dumpMethodList(Class<?> c, String label) {
         try {
-            StringBuilder s = new StringBuilder(TAG).append(' ').append(phase).append(" fields:");
-            for (Field f : allFields(o.getClass())) {
-                String n = f.getName();
-                String lower = n.toLowerCase(Locale.ROOT);
-                if (!lower.contains("game") && !lower.contains("sched") && !lower.contains("perf")
-                        && !lower.contains("level") && !lower.contains("config") && !lower.matches("f\\d+")) continue;
-                try {
-                    f.setAccessible(true);
-                    s.append(' ').append(n).append('=').append(String.valueOf(f.get(o)));
-                } catch (Throwable ignored) { }
+            for (Method m : c.getDeclaredMethods()) {
+                XposedBridge.log(TAG + " METHOD " + label + "." + signature(m));
             }
-            XposedBridge.log(s.toString());
-        } catch (Throwable e) { XposedBridge.log(TAG + " game state read failed: " + e); }
+        } catch (Throwable e) {
+            XposedBridge.log(TAG + " method list failed " + label + ": " + e);
+        }
     }
 
     private static void dumpAllFields(Object o, String label) {
@@ -193,8 +221,8 @@ public class GpuTraceHook implements IXposedHookLoadPackage {
                     f.setAccessible(true);
                     Object v = f.get(o);
                     String text = String.valueOf(v);
-                    if (text.length() > 400) text = text.substring(0, 400) + "...";
-                    s.append(' ').append(f.getName()).append('=').append(text);
+                    if (text.length() > 800) text = text.substring(0, 800) + "...";
+                    s.append(' ').append(f.getName()).append("<").append(f.getType().getSimpleName()).append(">=").append(text);
                 } catch (Throwable ignored) { }
             }
             XposedBridge.log(s.toString());
@@ -220,7 +248,7 @@ public class GpuTraceHook implements IXposedHookLoadPackage {
             else if (v instanceof byte[]) sb.append(Arrays.toString((byte[]) v));
             else {
                 String text = String.valueOf(v);
-                if (text.length() > 500) text = text.substring(0, 500) + "...";
+                if (text.length() > 700) text = text.substring(0, 700) + "...";
                 sb.append(text);
             }
         }
