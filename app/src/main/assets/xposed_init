@@ -1,3 +1,4 @@
 com.microllate.joyose.JoyoseHook
 com.microllate.joyose.PowerKeeperHook
 com.microllate.joyose.GpuTraceHook
+com.microllate.joyose.PerfPathTraceHook
