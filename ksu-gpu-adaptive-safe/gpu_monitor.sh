@@ -1,7 +1,10 @@
 #!/system/bin/sh
 
 GPU=/sys/class/kgsl/kgsl-3d0
-LOG_INTERVAL=1
+LOG_INTERVAL=0.2
+LOGDIR=/data/local/tmp/joyose-gpu-adaptive
+LOGFILE="$LOGDIR/monitor.log"
+MAX_LINES=300
 
 read_file() {
     [ -r "$1" ] && cat "$1" 2>/dev/null || echo "NA"
@@ -32,10 +35,21 @@ get_temp() {
     echo NA
 }
 
-mkdir -p /data/local/tmp/joyose-gpu-adaptive
+trim_log() {
+    [ -f "$LOGFILE" ] || return 0
+    lines=$(wc -l < "$LOGFILE" 2>/dev/null)
+    case "$lines" in
+        ''|*[!0-9]*) return 0;;
+    esac
+    if [ "$lines" -gt "$MAX_LINES" ]; then
+        tail -n "$MAX_LINES" "$LOGFILE" > "$LOGFILE.tmp" 2>/dev/null && mv "$LOGFILE.tmp" "$LOGFILE"
+    fi
+}
+
+mkdir -p "$LOGDIR"
 
 while true; do
-    ts=$(date '+%Y-%m-%d %H:%M:%S')
+    ts=$(date '+%Y-%m-%d %H:%M:%S.%3N')
     pkg=$(get_foreground)
     freq=$(read_file "$GPU/devfreq/cur_freq")
     load=$(read_file "$GPU/gpu_busy_percentage")
@@ -46,5 +60,6 @@ while true; do
     printf '%s pkg=%s freq=%s load=%s temp_c=%s governor=%s\n' \
         "$ts" "${pkg:-NA}" "$freq" "$load" "$temp" "$governor"
 
+    trim_log
     sleep "$LOG_INTERVAL"
 done
