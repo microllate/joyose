@@ -10,6 +10,7 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
+    private static final String DOUYIN = "com.ss.android.ugc.aweme";
     private static final int UNLOCK_FPS = 120;
     private static final int TRACE_HINT = 4227;
 
@@ -34,11 +35,13 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                     String.class, int.class, int.class, new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             if (p.args.length < 3 || !(p.args[1] instanceof Integer)) return;
+                            String packageName = String.valueOf(p.args[0]);
                             int fps = ((Integer) p.args[1]).intValue();
+                            if (DOUYIN.equals(packageName)) return;
                             if (fps > 0 && fps <= 60) {
                                 p.args[1] = UNLOCK_FPS;
                                 XposedBridge.log(TAG + " setScreenEffect: "
-                                        + p.args[0] + " " + fps + " -> " + UNLOCK_FPS
+                                        + packageName + " " + fps + " -> " + UNLOCK_FPS
                                         + " cookie=" + p.args[2]);
                             }
                         }
@@ -163,11 +166,13 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
             args[parameterTypes.length] = new XC_MethodHook() {
                 @Override protected void beforeHookedMethod(MethodHookParam p) {
                     if (p.args.length < 2 || !(p.args[1] instanceof Integer)) return;
+                    String packageName = String.valueOf(p.args[0]);
+                    if (DOUYIN.equals(packageName)) return;
                     int fps = ((Integer) p.args[1]).intValue();
                     if (fps > 0 && fps <= 60) {
                         p.args[1] = UNLOCK_FPS;
                         XposedBridge.log(TAG + " " + name + ": "
-                                + p.args[0] + " " + fps + " -> " + UNLOCK_FPS);
+                                + packageName + " " + fps + " -> " + UNLOCK_FPS);
                     }
                 }
             };
