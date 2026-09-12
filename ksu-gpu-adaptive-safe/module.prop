@@ -1,0 +1,7 @@
+id=joyose-gpu-adaptive-safe
+name=GPU Adaptive Safe Monitor
+version=0.1.0-stage1
+versionCode=1
+author=microllate
+license=MIT
+description=Read-only Adreno GPU monitor for safe adaptive-control research; no sysfs writes.
