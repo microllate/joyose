@@ -1,0 +1,43 @@
+name: Build KSU GPU Adaptive Safe
+
+on:
+  push:
+    paths:
+      - 'ksu-gpu-adaptive-safe/**'
+      - '.github/workflows/build-ksu-gpu.yml'
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate module
+        run: |
+          set -e
+          test -f ksu-gpu-adaptive-safe/module.prop
+          test -f ksu-gpu-adaptive-safe/service.sh
+          test -f ksu-gpu-adaptive-safe/gpu_monitor.sh
+          grep -q '^id=joyose-gpu-adaptive-safe$' ksu-gpu-adaptive-safe/module.prop
+          grep -q 'no GPU, CPU, governor, thermal, or perf-lock writes' ksu-gpu-adaptive-safe/service.sh
+          ! grep -R -nE '(^|[^A-Za-z])(echo|printf|sed|tee|dd|cp|mv)[[:space:]].*>[[:space:]]*/sys/' ksu-gpu-adaptive-safe || true
+
+      - name: Package KSU ZIP
+        run: |
+          set -e
+          mkdir -p dist
+          cd ksu-gpu-adaptive-safe
+          zip -r9 "../dist/joyose-gpu-adaptive-safe-v0.1.0-stage1.zip" . -x '*.DS_Store'
+
+      - name: Verify ZIP
+        run: |
+          set -e
+          unzip -l dist/joyose-gpu-adaptive-safe-v0.1.0-stage1.zip
+          unzip -p dist/joyose-gpu-adaptive-safe-v0.1.0-stage1.zip module.prop | grep -q '^id=joyose-gpu-adaptive-safe$'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: joyose-gpu-adaptive-safe-v0.1.0-stage1
+          path: dist/joyose-gpu-adaptive-safe-v0.1.0-stage1.zip
+          if-no-files-found: error
