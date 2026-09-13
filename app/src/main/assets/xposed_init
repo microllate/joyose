@@ -3,4 +3,3 @@ com.microllate.joyose.PowerKeeperHook
 com.microllate.joyose.GpuTraceHook
 com.microllate.joyose.GpuResourceTraceHook
 com.microllate.joyose.DailyGpuMonitorHook
-com.microllate.joyose.PowerKeeperGpuMonitorHook
