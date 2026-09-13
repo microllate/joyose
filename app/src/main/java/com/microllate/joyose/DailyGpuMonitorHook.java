@@ -13,21 +13,18 @@ import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/**
- * Observation-only daily GPU/frame monitor for the ChatGPT Android app.
- * No sysfs writes and no scheduling/performance changes.
- */
+/** Observation-only daily GPU/frame monitor for the Douyin Android app. */
 public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-DailyGPU]";
-    private static final String CHATGPT = "com.openai.chatgpt";
+    private static final String TARGET = "com.ss.android.ugc.aweme";
     private static final String GPU = "/sys/class/kgsl/kgsl-3d0";
     private static final long SAMPLE_MS = 500;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam p) {
-        if (!CHATGPT.equals(p.packageName)) return;
-        XposedBridge.log(TAG + " loaded: " + p.processName);
-        new Handler(Looper.getMainLooper()).post(() -> start());
+        if (!TARGET.equals(p.packageName)) return;
+        XposedBridge.log(TAG + " loaded: " + p.processName + " target=" + TARGET);
+        new Handler(Looper.getMainLooper()).post(this::start);
     }
 
     private void start() {
@@ -65,11 +62,10 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
 
     private void sampleGpu() {
         String freq = readFirst(GPU + "/devfreq/cur_freq");
-        String busy = readFirst(GPU + "/gpu_busy_percentage");
-        if (busy == null) busy = readFirst(GPU + "/gpu_busy_percent");
-        String load = readFirst(GPU + "/gpu_busy_time");
-        String util = busy != null ? busy : (load != null ? load : "?");
-        XposedBridge.log(TAG + " gpu_freq=" + freq + "Hz gpu_util=" + util);
+        String util = readFirst(GPU + "/gpu_busy_percentage");
+        if (util == null) util = readFirst(GPU + "/gpu_busy_percent");
+        XposedBridge.log(TAG + " gpu_freq=" + (freq == null ? "?" : freq)
+                + "Hz gpu_util=" + (util == null ? "?" : util));
     }
 
     private static String readFirst(String path) {
