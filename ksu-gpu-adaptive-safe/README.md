@@ -23,7 +23,7 @@ Log file:
 
 ## Game frame timing
 
-Android's SurfaceFlinger `timestats` provides game-layer average FPS and present-to-present timing histograms. Android documents this path specifically for measuring game FPS and slow frames, including OpenGL/Vulkan games. citeturn1search6
+Android SurfaceFlinger `timestats` provides game-layer average FPS and present-to-present timing histograms. This is useful for games because it measures the display-side frame timing rather than relying only on the application's FPS counter.
 
 A manual helper is included:
 
