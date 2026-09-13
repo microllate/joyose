@@ -1,8 +1,8 @@
 #!/system/bin/sh
 
 # GPU-FASRS: frame-aware GPU controller for Adreno/KGSL.
-# Target: 王者荣耀 only. The kernel governor remains in charge; we only move
-# the devfreq max_freq ceiling after several consecutive frame-safe samples.
+# Target: 王者荣耀 only. The kernel GPU governor remains in charge; this
+# controller only moves the devfreq max_freq ceiling after stable frame data.
 
 GPU=/sys/class/kgsl/kgsl-3d0
 DEVFREQ="$GPU/devfreq"
@@ -52,49 +52,30 @@ battery_temp() {
     echo NA
 }
 
-# Returns: fps max_interval_ms. Uses completed SurfaceFlinger presentation
-# timestamps; no latency-clear is issued, so we do not disturb other tools.
-frame_stats() {
-    dumpsys SurfaceFlinger --latency SurfaceView 2>/dev/null | awk '
-    BEGIN { n=0; prev=0; total=0; maxgap=0; pending="9223372036854775807" }
-    NR==1 { next }
-    NF==3 {
-        c=$3+0
-        if (c==pending || c<=0) next
-        if (prev>0) {
-            gap=(c-prev)/1000000
-            if (gap>0 && gap<1000) {
-                total++
-                if (gap>maxgap) maxgap=gap
-            }
-        }
-        prev=c
-    }
-    END {
-        if (total<10) { print "NA NA"; exit }
-        # The buffer contains recent completed frames; this is a smoothed
-        # presentation-rate estimate rather than Choreographer callback rate.
-        first=0; last=0
-        # Re-read the stream is not possible in awk, so derive FPS from the
-        # average inter-frame gap accumulated above.
-        # total is the number of intervals; maxgap is a jank guard.
-        # The average gap is reconstructed from the same timestamps by a
-        # second pass in awk is unavailable; use the nominal refresh period
-        # from the first line through a conservative count below.
-        # Emit maxgap and interval count; caller derives FPS from refresh rate.
-        print total, maxgap
-    }'
+latency_dump() {
+    out=$(dumpsys SurfaceFlinger --latency SurfaceView 2>/dev/null)
+    if printf '%s\n' "$out" | awk 'NR>1 && NF==3 {ok=1; exit} END{exit ok?0:1}'; then
+        printf '%s\n' "$out"
+        return
+    fi
+
+    layer=$(dumpsys SurfaceFlinger --list 2>/dev/null | grep -m1 "$TARGET_PKG" || true)
+    [ -n "$layer" ] || return
+    dumpsys SurfaceFlinger --latency "$layer" 2>/dev/null
 }
 
-# More direct frame-rate estimate: count unique completed timestamps in the
-# last 128-frame buffer and divide by the observed timestamp span.
+# Returns: fps max_interval_ms. The source is completed SurfaceFlinger
+# presentation timestamps; no latency-clear is issued.
 frame_fps() {
-    dumpsys SurfaceFlinger --latency SurfaceView 2>/dev/null | awk '
-    BEGIN { n=0; pending="9223372036854775807" }
+    latency_dump | awk '
+    BEGIN { n=0; pending="9223372036854775807"; prev=0 }
     NR>1 && NF==3 {
         c=$3+0
         if (c==pending || c<=0) next
+        # Ignore duplicate presentation timestamps.
+        if (c==prev) next
         a[++n]=c
+        prev=c
     }
     END {
         if (n<20) { print "NA NA"; exit }
@@ -120,21 +101,18 @@ write_cap() {
     return 0
 }
 
-# Keep the frequency table in ascending order. The original max is preserved
-# as the top ceiling; we never touch min_freq or the governor.
 FREQ_LIST=$(readv "$FREQS" | tr ' ' '\n' | awk '/^[0-9]+$/ {print}' | sort -n | uniq)
 ORIGINAL_MAX=$(readv "$MAX_FREQ")
 [ -n "$ORIGINAL_MAX" ] || {
     echo "START failed=no_max_freq"; exit 1
 }
 
-# Find the index of the current maximum in the sorted OPP list.
-INDEX=$(printf '%s\n' "$FREQ_LIST" | awk -v m="$ORIGINAL_MAX" '$1<=m{idx++} END{print idx-1}')
-[ -n "$INDEX" ] || INDEX=0
-
-# Build the controller's ordered list from OPPs <= original max.
 CAP_LIST=$(printf '%s\n' "$FREQ_LIST" | awk -v m="$ORIGINAL_MAX" '$1<=m')
 CAP_COUNT=$(printf '%s\n' "$CAP_LIST" | awk 'NF{n++} END{print n+0}')
+[ "$CAP_COUNT" -ge 2 ] || {
+    echo "START failed=insufficient_gpu_opps count=$CAP_COUNT"; exit 1
+}
+
 CAP_INDEX=$((CAP_COUNT - 1))
 GOOD=0
 ACTIVE=0
@@ -165,11 +143,12 @@ while true; do
     fi
 
     if [ "$ACTIVE" = "0" ]; then
-        # Re-capture the current ceiling in case the system changed it while
-        # the game was not foreground. This becomes our session baseline.
+        # Re-capture the ceiling at game entry so a system policy change made
+        # while the game was backgrounded becomes the session baseline.
         ORIGINAL_MAX=$(readv "$MAX_FREQ")
         CAP_LIST=$(printf '%s\n' "$FREQ_LIST" | awk -v m="$ORIGINAL_MAX" '$1<=m')
         CAP_COUNT=$(printf '%s\n' "$CAP_LIST" | awk 'NF{n++} END{print n+0}')
+        [ "$CAP_COUNT" -ge 2 ] || { sleep 2; continue; }
         CAP_INDEX=$((CAP_COUNT - 1))
         LAST_CAP="$ORIGINAL_MAX"
         ACTIVE=1
@@ -225,8 +204,8 @@ while true; do
     printf '%s pkg=%s fps=%s maxgap_ms=%s gpu_busy=%s cur=%s cap=%s temp_c=%s action=%s good=%s\n' \
         "$(date '+%Y-%m-%d %H:%M:%S')" "$pkg" "$fps" "$maxgap" "$busy" "$cur" "$LAST_CAP" "$temp" "$action" "$GOOD"
 
-    printf 'pkg=%s\nfps=%s\ngpu_busy=%s\ncur_freq=%s\ncap_freq=%s\ntemp_c=%s\naction=%s\n' \
-        "$pkg" "$fps" "$busy" "$cur" "$LAST_CAP" "$temp" "$action" > "$STATE"
+    printf 'baseline_max=%s\npkg=%s\nfps=%s\ngpu_busy=%s\ncur_freq=%s\ncap_freq=%s\ntemp_c=%s\naction=%s\n' \
+        "$ORIGINAL_MAX" "$pkg" "$fps" "$busy" "$cur" "$LAST_CAP" "$temp" "$action" > "$STATE"
 
     sleep "$SAMPLE_SEC"
 done
