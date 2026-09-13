@@ -52,27 +52,25 @@ battery_temp() {
     echo NA
 }
 
-latency_dump() {
-    out=$(dumpsys SurfaceFlinger --latency SurfaceView 2>/dev/null)
-    if printf '%s\n' "$out" | awk 'NR>1 && NF==3 {ok=1; exit} END{exit ok?0:1}'; then
-        printf '%s\n' "$out"
-        return
-    fi
-
-    layer=$(dumpsys SurfaceFlinger --list 2>/dev/null | grep -m1 "$TARGET_PKG" || true)
-    [ -n "$layer" ] || return
-    dumpsys SurfaceFlinger --latency "$layer" 2>/dev/null
+# Find a real SurfaceFlinger layer belonging to the target game. Modern
+# games do not necessarily expose a layer literally named SurfaceView.
+find_layer() {
+    dumpsys SurfaceFlinger --list 2>/dev/null \
+        | grep "$TARGET_PKG" \
+        | head -n 1
 }
 
-# Returns: fps max_interval_ms. The source is completed SurfaceFlinger
-# presentation timestamps; no latency-clear is issued.
+# Returns: fps max_interval_ms. Uses completed SurfaceFlinger presentation
+# timestamps; no latency-clear is issued.
 frame_fps() {
-    latency_dump | awk '
+    layer=$(find_layer)
+    [ -n "$layer" ] || { echo "NA NA"; return; }
+
+    dumpsys SurfaceFlinger --latency "$layer" 2>/dev/null | awk '
     BEGIN { n=0; pending="9223372036854775807"; prev=0 }
     NR>1 && NF==3 {
         c=$3+0
         if (c==pending || c<=0) next
-        # Ignore duplicate presentation timestamps.
         if (c==prev) next
         a[++n]=c
         prev=c
@@ -143,8 +141,6 @@ while true; do
     fi
 
     if [ "$ACTIVE" = "0" ]; then
-        # Re-capture the ceiling at game entry so a system policy change made
-        # while the game was backgrounded becomes the session baseline.
         ORIGINAL_MAX=$(readv "$MAX_FREQ")
         CAP_LIST=$(printf '%s\n' "$FREQ_LIST" | awk -v m="$ORIGINAL_MAX" '$1<=m')
         CAP_COUNT=$(printf '%s\n' "$CAP_LIST" | awk 'NF{n++} END{print n+0}')
