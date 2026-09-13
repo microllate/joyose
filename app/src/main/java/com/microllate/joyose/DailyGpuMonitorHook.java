@@ -3,6 +3,8 @@ package com.microllate.joyose;
 import android.app.Application;
 import android.os.Handler;
 import android.os.Looper;
+import android.system.Os;
+import android.system.OsConstants;
 import android.util.Log;
 import android.view.Choreographer;
 
@@ -13,7 +15,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
@@ -46,7 +47,7 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
             });
         } catch (Throwable e) {
             log("Application.onCreate hook failed: " + e);
-            new Handler(Looper.getMainLooper()).post(this::startOnce);
+            new Handler(Looper.getMainLooper()).post(DailyGpuMonitorHook.this::startOnce);
         }
     }
 
@@ -67,7 +68,7 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
                     if (windowStart[0] == 0) windowStart[0] = now;
                     if (now - windowStart[0] >= 1_000_000_000L) {
                         double fps = frames[0] * 1_000_000_000.0 / (now - windowStart[0]);
-                        log(String.format(Locale.US, "frame_fps=%.1f", fps));
+                        log(String.format(java.util.Locale.US, "frame_fps=%.1f", fps));
                         frames[0] = 0;
                         windowStart[0] = now;
                     }
@@ -79,7 +80,8 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
                 @Override public void run() {
                     double cpuUsage = cpu.update();
                     if (cpuUsage >= 0) {
-                        log(String.format(Locale.US, "pid=%d top_thread_cpu=%.1f%% top_threads=%d",
+                        log(String.format(java.util.Locale.US,
+                                "pid=%d top_thread_cpu=%.1f%% top_threads=%d",
                                 pid, cpuUsage * 100.0, cpu.topThreadCount()));
                     }
                     handler.postDelayed(this, SAMPLE_MS);
@@ -102,7 +104,6 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
         ThreadUsageMonitor(int pid) {
             this.pid = pid;
             this.lastUpdateNs = System.nanoTime();
-            this.lastThreadRefreshNs = 0;
         }
 
         double update() {
@@ -122,6 +123,7 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
                 long ticks = readThreadCpuTicks(pid, s.tid);
                 if (ticks < 0) continue;
                 long delta = ticks - s.lastTicks;
+                if (delta < 0) continue;
                 s.lastTicks = ticks;
                 double usage = delta / (elapsedSec * ticksPerSec);
                 if (usage > max) max = usage;
@@ -136,32 +138,35 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
             File[] files = task.listFiles();
             if (files == null) return;
 
-            Map<Integer, Sample> next = new HashMap<>();
+            Map<Integer, Long> current = new HashMap<>();
             for (File f : files) {
                 try {
                     int tid = Integer.parseInt(f.getName());
                     long ticks = readThreadCpuTicks(pid, tid);
-                    if (ticks < 0) continue;
-                    Sample old = trackers.get(tid);
-                    next.put(tid, new Sample(tid, old == null ? ticks : old.lastTicks));
+                    if (ticks >= 0) current.put(tid, ticks);
                 } catch (Throwable ignored) {
                 }
             }
 
-            List<Sample> ranked = new ArrayList<>(next.values());
-            ranked.sort(Comparator.comparingLong((Sample s) -> readThreadCpuTicks(pid, s.tid))
-                    .reversed());
+            List<Map.Entry<Integer, Long>> ranked = new ArrayList<>(current.entrySet());
+            ranked.sort(Map.Entry.<Integer, Long>comparingByValue().reversed());
             if (ranked.size() > 8) ranked = ranked.subList(0, 8);
 
+            Map<Integer, Sample> next = new HashMap<>();
+            for (Map.Entry<Integer, Long> entry : ranked) {
+                Sample old = trackers.get(entry.getKey());
+                long baseline = old == null ? entry.getValue() : old.lastTicks;
+                next.put(entry.getKey(), new Sample(entry.getKey(), baseline));
+            }
             trackers.clear();
-            for (Sample s : ranked) trackers.put(s.tid, s);
+            trackers.putAll(next);
             topCount = trackers.size();
             lastThreadRefreshNs = now;
         }
 
         private static long getClockTicks() {
             try {
-                return Long.parseLong(readFirst("/proc/sys/kernel/osrelease") == null ? "0" : "100");
+                return Os.sysconf(OsConstants._SC_CLK_TCK);
             } catch (Throwable ignored) {
                 return 100;
             }
@@ -174,6 +179,7 @@ public class DailyGpuMonitorHook implements IXposedHookLoadPackage {
                 int close = line.lastIndexOf(')');
                 if (close < 0 || close + 2 >= line.length()) return -1;
                 String[] parts = line.substring(close + 2).trim().split("\\s+");
+                // After the comm field, index 11 = utime and 12 = stime.
                 if (parts.length <= 12) return -1;
                 long utime = Long.parseLong(parts[11]);
                 long stime = Long.parseLong(parts[12]);
