@@ -1,0 +1,27 @@
+name: Build GPU-FASRS module
+
+on:
+  push:
+    branches:
+      - feature/gpu-fasrs
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate scripts
+        run: |
+          chmod +x ksu-gpu-fasrs/service.sh ksu-gpu-fasrs/gpu_fasrs.sh
+          bash -n ksu-gpu-fasrs/service.sh
+          bash -n ksu-gpu-fasrs/gpu_fasrs.sh
+      - name: Package KernelSU module
+        run: |
+          chmod 755 ksu-gpu-fasrs/service.sh ksu-gpu-fasrs/gpu_fasrs.sh
+          cd ksu-gpu-fasrs
+          zip -r ../joyose-gpu-fasrs-v0.1.0-stage2.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: joyose-gpu-fasrs-v0.1.0-stage2
+          path: joyose-gpu-fasrs-v0.1.0-stage2.zip
