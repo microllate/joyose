@@ -14,6 +14,11 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final int UNLOCK_FPS = 120;
     private static final int TRACE_HINT = 4227;
 
+    // QGPE CPU frequency resources observed on the target Qualcomm platform.
+    private static final int CPU_PRIME_MIN = 0x40800200;
+    private static final int CPU_BIG_MIN = 0x40800000;
+    private static final int CPU_LITTLE_MIN = 0x40800100;
+
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
         if (!POWERKEEPER.equals(lpparam.packageName)) return;
@@ -64,6 +69,9 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                             if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
                             int duration = ((Integer) p.args[0]).intValue();
                             int[] resources = (int[]) p.args[1];
+                            if (stripCpuCloudControl(resources)) {
+                                p.args[1] = resources;
+                            }
                             XposedBridge.log(TAG + " QcomBoost.e duration="
                                     + duration + " resources=" + formatIntArray(resources));
                         }
@@ -90,11 +98,37 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         }
     }
 
+    private static boolean stripCpuCloudControl(int[] resources) {
+        if (resources == null || resources.length < 2) return false;
+        boolean changed = false;
+        int write = 0;
+        for (int read = 0; read < resources.length; read++) {
+            int value = resources[read];
+            if (isCpuMinResource(value)) {
+                changed = true;
+                String next = read + 1 < resources.length
+                        ? Integer.toString(resources[read + 1]) : "?";
+                XposedBridge.log(TAG + " BLOCK CPU resource=0x"
+                        + Integer.toHexString(value) + " value=" + next);
+                if (read + 1 < resources.length) read++;
+                continue;
+            }
+            resources[write++] = value;
+        }
+        while (write < resources.length) resources[write++] = 0;
+        return changed;
+    }
+
+    private static boolean isCpuMinResource(int resource) {
+        return resource == CPU_PRIME_MIN
+                || resource == CPU_BIG_MIN
+                || resource == CPU_LITTLE_MIN;
+    }
+
     /**
      * PowerKeeper's actual Qualcomm requests are ultimately passed to the
      * framework BoostFramework. Hook the final API as a second observation
      * point because an obfuscated vendor wrapper may bypass our g.e() hook.
-     * Diagnostic only: no performance value is modified.
      */
     private static void hookBoostFramework(ClassLoader cl) {
         try {
@@ -106,6 +140,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                             if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
                             int duration = ((Integer) p.args[0]).intValue();
                             int[] resources = (int[]) p.args[1];
+                            stripCpuCloudControl(resources);
                             XposedBridge.log(TAG + " BoostFramework.perfLockAcquire duration="
                                     + duration + " resources=" + formatIntArray(resources));
                         }
