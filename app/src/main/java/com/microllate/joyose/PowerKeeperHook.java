@@ -13,6 +13,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String DOUYIN = "com.ss.android.ugc.aweme";
     private static final int UNLOCK_FPS = 120;
     private static final int TRACE_HINT = 4227;
+    private static final boolean BLOCK_CPU_BOOST_4227 = true;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) throws Throwable {
@@ -77,25 +78,25 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                             int hint = ((Integer) p.args[0]).intValue();
                             int duration = ((Integer) p.args[1]).intValue();
                             int tpid = ((Integer) p.args[2]).intValue();
+                            if (hint == TRACE_HINT && BLOCK_CPU_BOOST_4227) {
+                                XposedBridge.log(TAG + " BLOCK CPU perfHint 4227 duration="
+                                        + duration + " tpid=" + tpid);
+                                logCallerStack("BLOCKED QcomBoost.d hint=4227 caller");
+                                p.setResult(null);
+                                return;
+                            }
                             XposedBridge.log(TAG + " QcomBoost.d hint="
                                     + hint + " duration=" + duration + " tpid=" + tpid);
-                            if (hint == TRACE_HINT) {
-                                logCallerStack("QcomBoost.d hint=4227 caller");
-                            }
                         }
                     });
-            XposedBridge.log(TAG + " hooked QcomBoost.d");
+            XposedBridge.log(TAG + " hooked QcomBoost.d (4227 block="
+                    + BLOCK_CPU_BOOST_4227 + ")");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " QcomBoost diagnostics unavailable: " + e);
         }
     }
 
-    /**
-     * PowerKeeper's actual Qualcomm requests are ultimately passed to the
-     * framework BoostFramework. Hook the final API as a second observation
-     * point because an obfuscated vendor wrapper may bypass our g.e() hook.
-     * Diagnostic only: no performance value is modified.
-     */
+    /** Hook the final BoostFramework API as a second observation/block point. */
     private static void hookBoostFramework(ClassLoader cl) {
         try {
             Class<?> c = XposedHelpers.findClass("android.util.BoostFramework", cl);
@@ -117,12 +118,17 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             int hint = ((Integer) p.args[0]).intValue();
+                            if (hint == TRACE_HINT && BLOCK_CPU_BOOST_4227) {
+                                XposedBridge.log(TAG + " BLOCK BoostFramework.perfHint 4227 userData="
+                                        + p.args[1] + " duration=" + p.args[2]
+                                        + " tpid=" + p.args[3]);
+                                logCallerStack("BLOCKED BoostFramework.perfHint hint=4227 caller");
+                                p.setResult(null);
+                                return;
+                            }
                             XposedBridge.log(TAG + " BoostFramework.perfHint hint="
                                     + hint + " userData=" + p.args[1]
                                     + " duration=" + p.args[2] + " tpid=" + p.args[3]);
-                            if (hint == TRACE_HINT) {
-                                logCallerStack("BoostFramework.perfHint hint=4227 caller");
-                            }
                         }
                     });
             XposedBridge.log(TAG + " hooked BoostFramework.perfHint");
