@@ -62,7 +62,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                         }
                     });
 
-            XposedBridge.log(TAG + " hooked DisplayFrameSetting FPS policy");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " hook unavailable: " + e);
         }
@@ -85,7 +84,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                                             + " resources=" + formatIntArray(resources));
                         }
                     });
-            XposedBridge.log(TAG + " hooked QcomBoost.e");
 
             XposedHelpers.findAndHookMethod(c, "d", int.class, int.class, int.class,
                     new XC_MethodHook() {
@@ -94,12 +92,14 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                             int hint = ((Integer) p.args[0]).intValue();
                             int duration = ((Integer) p.args[1]).intValue();
                             int tpid = ((Integer) p.args[2]).intValue();
+                            // Hint 4227 is a routine, high-frequency PowerKeeper request.
+                            // Do not log it; the BoostFramework hook also skips this hint.
+                            if (hint == TRACE_HINT) return;
                             String key = "QcomBoost.d:" + hint + ":" + duration + ":" + tpid;
                             logDiagnosticRateLimited(key, TAG + " QcomBoost.d hint="
                                     + hint + " duration=" + duration + " tpid=" + tpid);
                         }
                     });
-            XposedBridge.log(TAG + " hooked QcomBoost.d");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " QcomBoost diagnostics unavailable: " + e);
         }
@@ -127,7 +127,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                                             + duration + " resources=" + formatIntArray(resources));
                         }
                     });
-            XposedBridge.log(TAG + " hooked BoostFramework.perfLockAcquire");
 
             XposedHelpers.findAndHookMethod(c, "perfHint",
                     int.class, String.class, int.class, int.class,
@@ -147,7 +146,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                                     + " duration=" + duration + " tpid=" + tpid);
                         }
                     });
-            XposedBridge.log(TAG + " hooked BoostFramework.perfHint");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " BoostFramework diagnostics unavailable: " + e);
         }
@@ -182,7 +180,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                 }
             };
             XposedHelpers.findAndHookMethod(c, name, args);
-            XposedBridge.log(TAG + " hooked " + name);
         } catch (Throwable e) {
             XposedBridge.log(TAG + " " + name + " unavailable: " + e);
         }
