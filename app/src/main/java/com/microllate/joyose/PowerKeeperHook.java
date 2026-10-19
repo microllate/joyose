@@ -25,8 +25,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     // per PowerKeeper process, rather than once for every repeated framework call.
     private static final Set<String> LOGGED_FPS_OVERRIDES =
             Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
-    private static final Set<String> LOGGED_STACK_TRACES =
-            Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private static final ConcurrentHashMap<String, Long> LAST_DIAGNOSTIC_LOG =
             new ConcurrentHashMap<>();
 
@@ -99,9 +97,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                             String key = "QcomBoost.d:" + hint + ":" + duration + ":" + tpid;
                             logDiagnosticRateLimited(key, TAG + " QcomBoost.d hint="
                                     + hint + " duration=" + duration + " tpid=" + tpid);
-                            if (hint == TRACE_HINT && LOGGED_STACK_TRACES.add("QcomBoost.d:" + hint)) {
-                                logCallerStack("QcomBoost.d hint=4227 caller");
-                            }
                         }
                     });
             XposedBridge.log(TAG + " hooked QcomBoost.d");
@@ -139,6 +134,9 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             int hint = ((Integer) p.args[0]).intValue();
+                            // QcomBoost.d already records hint 4227 before it reaches this API.
+                            // Skip it here to avoid duplicate diagnostics for the same request.
+                            if (hint == TRACE_HINT) return;
                             String userData = String.valueOf(p.args[1]);
                             int duration = ((Integer) p.args[2]).intValue();
                             int tpid = ((Integer) p.args[3]).intValue();
@@ -147,33 +145,11 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                             logDiagnosticRateLimited(key, TAG + " BoostFramework.perfHint hint="
                                     + hint + " userData=" + userData
                                     + " duration=" + duration + " tpid=" + tpid);
-                            if (hint == TRACE_HINT
-                                    && LOGGED_STACK_TRACES.add("BoostFramework.perfHint:" + hint)) {
-                                logCallerStack("BoostFramework.perfHint hint=4227 caller");
-                            }
                         }
                     });
             XposedBridge.log(TAG + " hooked BoostFramework.perfHint");
         } catch (Throwable e) {
             XposedBridge.log(TAG + " BoostFramework diagnostics unavailable: " + e);
-        }
-    }
-
-    private static void logCallerStack(String title) {
-        try {
-            StackTraceElement[] stack = Thread.currentThread().getStackTrace();
-            StringBuilder sb = new StringBuilder(TAG).append(' ').append(title);
-            int count = 0;
-            for (StackTraceElement e : stack) {
-                String cls = e.getClassName();
-                if (cls.equals(Thread.class.getName()) || cls.startsWith("de.robv.android.xposed.")) {
-                    continue;
-                }
-                if (count++ >= 18) break;
-                sb.append("\n  at ").append(e);
-            }
-            XposedBridge.log(sb.toString());
-        } catch (Throwable ignored) {
         }
     }
 
