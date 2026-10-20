@@ -12,7 +12,13 @@ import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
-/** PowerKeeper-side FPS policy bypass and Qualcomm performance diagnostics. */
+/**
+ * PowerKeeper FPS policy bypass and Qualcomm scheduling isolation.
+ *
+ * Scene is the preferred CPU/GPU scheduler on this setup. Block Qualcomm
+ * BoostFramework requests originating inside PowerKeeper only; this does not
+ * hook or suppress requests made by Scene or other application processes.
+ */
 public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String TAG = "[Joyose-PowerKeeper]";
     private static final String POWERKEEPER = "com.miui.powerkeeper";
@@ -20,6 +26,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final int UNLOCK_FPS = 120;
     private static final int TRACE_HINT = 4227;
     private static final long DIAGNOSTIC_LOG_INTERVAL_MS = 5000L;
+    private static final String BLOCKED_SCHEDULING_LOG_KEY = "PowerKeeper-scheduling-blocked";
 
     // FPS overrides are logged once per distinct package/original-FPS combination
     // per PowerKeeper process, rather than once for every repeated framework call.
@@ -106,10 +113,9 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     }
 
     /**
-     * PowerKeeper's actual Qualcomm requests are ultimately passed to the
-     * framework BoostFramework. Hook the final API as a second observation
-     * point because an obfuscated vendor wrapper may bypass our g.e() hook.
-     * Diagnostic only: no performance value is modified.
+     * Block at the final Java API boundary. This is scoped to the
+     * com.miui.powerkeeper process by handleLoadPackage(), so Scene and other
+     * apps retain their own BoostFramework access.
      */
     private static void hookBoostFramework(ClassLoader cl) {
         try {
@@ -121,10 +127,11 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                             if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
                             int duration = ((Integer) p.args[0]).intValue();
                             int[] resources = (int[]) p.args[1];
-                            logDiagnosticRateLimited("BoostFramework.perfLockAcquire:"
-                                            + duration + ":" + formatIntArray(resources),
-                                    TAG + " BoostFramework.perfLockAcquire duration="
+                            logDiagnosticRateLimited(BLOCKED_SCHEDULING_LOG_KEY,
+                                    TAG + " blocked PowerKeeper perfLockAcquire duration="
                                             + duration + " resources=" + formatIntArray(resources));
+                            // perfLockAcquire returns an int handle; zero means no lock acquired.
+                            p.setResult(Integer.valueOf(0));
                         }
                     });
 
@@ -133,17 +140,16 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
                     new XC_MethodHook() {
                         @Override protected void beforeHookedMethod(MethodHookParam p) {
                             int hint = ((Integer) p.args[0]).intValue();
-                            // QcomBoost.d already records hint 4227 before it reaches this API.
-                            // Skip it here to avoid duplicate diagnostics for the same request.
-                            if (hint == TRACE_HINT) return;
                             String userData = String.valueOf(p.args[1]);
                             int duration = ((Integer) p.args[2]).intValue();
                             int tpid = ((Integer) p.args[3]).intValue();
-                            String key = "BoostFramework.perfHint:" + hint + ":" + userData
+                            String key = "PowerKeeper-perfHint:" + hint + ":" + userData
                                     + ":" + duration + ":" + tpid;
-                            logDiagnosticRateLimited(key, TAG + " BoostFramework.perfHint hint="
+                            logDiagnosticRateLimited(key, TAG + " blocked PowerKeeper perfHint hint="
                                     + hint + " userData=" + userData
                                     + " duration=" + duration + " tpid=" + tpid);
+                            // perfHint returns an int status; skip the vendor performance hint.
+                            p.setResult(Integer.valueOf(0));
                         }
                     });
         } catch (Throwable e) {
