@@ -24,7 +24,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
     private static final String POWERKEEPER = "com.miui.powerkeeper";
     private static final String DOUYIN = "com.ss.android.ugc.aweme";
     private static final int UNLOCK_FPS = 120;
-    private static final int TRACE_HINT = 4227;
     private static final long DIAGNOSTIC_LOG_INTERVAL_MS = 5000L;
     private static final String BLOCKED_SCHEDULING_LOG_KEY = "PowerKeeper-scheduling-blocked";
 
@@ -71,44 +70,6 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
 
         } catch (Throwable e) {
             XposedBridge.log(TAG + " hook unavailable: " + e);
-        }
-    }
-
-    private static void hookQcomPerformance(ClassLoader cl) {
-        try {
-            Class<?> c = XposedHelpers.findClass(
-                    "com.miui.powerkeeper.perfengine.g", cl);
-
-            XposedHelpers.findAndHookMethod(c, "e", int.class, int[].class,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.args.length < 2 || !(p.args[1] instanceof int[])) return;
-                            int duration = ((Integer) p.args[0]).intValue();
-                            int[] resources = (int[]) p.args[1];
-                            logDiagnosticRateLimited("QcomBoost.e:" + duration + ":"
-                                            + formatIntArray(resources),
-                                    TAG + " QcomBoost.e duration=" + duration
-                                            + " resources=" + formatIntArray(resources));
-                        }
-                    });
-
-            XposedHelpers.findAndHookMethod(c, "d", int.class, int.class, int.class,
-                    new XC_MethodHook() {
-                        @Override protected void beforeHookedMethod(MethodHookParam p) {
-                            if (p.args.length < 3) return;
-                            int hint = ((Integer) p.args[0]).intValue();
-                            int duration = ((Integer) p.args[1]).intValue();
-                            int tpid = ((Integer) p.args[2]).intValue();
-                            // Hint 4227 is a routine, high-frequency PowerKeeper request.
-                            // Do not log it; the BoostFramework hook also skips this hint.
-                            if (hint == TRACE_HINT) return;
-                            String key = "QcomBoost.d:" + hint + ":" + duration + ":" + tpid;
-                            logDiagnosticRateLimited(key, TAG + " QcomBoost.d hint="
-                                    + hint + " duration=" + duration + " tpid=" + tpid);
-                        }
-                    });
-        } catch (Throwable e) {
-            XposedBridge.log(TAG + " QcomBoost diagnostics unavailable: " + e);
         }
     }
 
