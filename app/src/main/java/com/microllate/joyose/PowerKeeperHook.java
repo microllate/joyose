@@ -40,7 +40,7 @@ public class PowerKeeperHook implements IXposedHookLoadPackage {
         if (!POWERKEEPER.equals(lpparam.packageName)) return;
         XposedBridge.log(TAG + " loaded: " + lpparam.processName);
         hookDisplayFrameSetting(lpparam.classLoader);
-        hookQcomPerformance(lpparam.classLoader);
+        PowerKeeperPerfHook.install(lpparam.classLoader);
         hookBoostFramework(lpparam.classLoader);
     }
 
