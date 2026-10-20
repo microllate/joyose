@@ -44,7 +44,6 @@ public final class PowerKeeperPerfHook {
         XposedBridge.hookMethod(method, new XC_MethodHook() {
             @Override protected void beforeHookedMethod(MethodHookParam param) {
                 param.setResult(zeroValue(method.getReturnType()));
-                XposedBridge.log(TAG + " blocked " + param.method.getName());
             }
         });
     }
